@@ -1,15 +1,23 @@
 {
   "name": "vk-bot-core",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Simple library bots on vk.com",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Ivan Nedzvetskiy",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
     "axios": "^0.18.0",
     "qs": "^6.5.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stels-cs/vk-bot-core"
+  },
+  "bugs": {
+    "url": "https://github.com/stels-cs/vk-bot-core/issues",
+    "email": "stels-cs@ya.ru"
   }
 }
