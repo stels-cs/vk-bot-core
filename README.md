@@ -155,3 +155,33 @@ core.on("message_new", async msg => {
 core.start()
 ```
 
+# Основлные ошибки
+
+При запуске бота 
+
+```bash
+BOT FAILED: No token passed
+Error: No token passed
+....
+```
+
+Не передан, или передан пустой API ключ, проверьте строку где написано что-то такое const core = new Core(vk_token)
+
+```bash
+Error: VkApiError: groups.getById #5 User authorization failed: invalid access_token (4). 
+```
+
+Передан неверный API ключ, надо получить новый в настройках сообщества
+
+```bash
+BOT FAILED: VkApiError: groups.getById #27 Group authorization failed: group revoke access for this token. 
+Error: VkApiError: groups.getById #27 Group authorization failed: group revoke access for this token. 
+```
+API ключ удалили из сообщества, надо получить новый в настройках сообщества
+
+**Во время работы бота**
+
+```bash
+Error: VkApiError: messages.send #912 This is a chat bot feature, change this status in settings 
+```
+Не включены возможности бота в Управлении сообществом - Сообщения - Настройки для бота
