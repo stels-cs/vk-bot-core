@@ -1,6 +1,6 @@
 {
   "name": "vk-bot-core",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Bots for vk.com",
   "main": "index.js",
   "jsnext:main": "index.js",
