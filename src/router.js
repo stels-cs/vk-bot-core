@@ -40,7 +40,7 @@ class Router {
 			res = {message: res}
 		}
 
-		if (typeof res === "object") {
+		if (typeof res === "object" && res !== null) {
 			if (res instanceof Promise) {
 				res.then( some => {
 					this.response(some, type, update)

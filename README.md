@@ -1,6 +1,6 @@
 # Bot core
 
-Библиотека для создания бота ВКонтакте на NodeJS
+Библиотека для ботов ВКонтакте на NodeJS
 Для получения сообщений бот использует Long Poll https://vk.com/dev/bots_longpoll
 
 ```bash
@@ -9,12 +9,12 @@ npm i vk-bot-core
 
 Убедитесть что у вас установлена nodejs версии 8 или выше
 
-Пример самого простого бота
+Пример:
 
 ```js
 const {Core} = require('vk-bot-core')
 
-const vk_token = "dfbf7f2edd9....cf24858f9a00" //Токен сообщества с правами на сообщения и управленик
+const vk_token = "dfbf7f2edd9....cf24858f9a00" //Токен сообщества с правами на сообщения и управление
 
 const core = new Core(vk_token)
 
@@ -27,7 +27,7 @@ core.start()
 
 ```js
 const {Core} = require('vk-bot-core')
-const vk_token = "dfbf7f2edd9....cf24858f9a00" //Токен сообщества с правами на сообщения и управленик
+const vk_token = "dfbf7f2edd9....cf24858f9a00" //Токен сообщества с правами на сообщения и управление
 
 const core = new Core(vk_token)
 
@@ -46,11 +46,11 @@ core.start()
 * callback - function(CallbackEvent) return string|object обработчик события, принимает CallbackEvent и возвращает строку или объект с параметрами для метода https://vk.com/dev/messages.send. Можно ничего не возвращать в этом случае пользователю ничего не будет отправленно
 * filter – function(CallbackEvent) return bool фильтр событий, если функция вернет true то будет вызван callback, иначе будут проверены другие обработчики этого типа события 
 
-Обратите внимание что важет порядок объявления обработчиков событий одного типа
+Обратите внимание что важен порядок объявления обработчиков событий одного типа
 
 ```js
 core.on("message_new", msg => msg.HasText("инфо"), () => `kek`) //1
-core.on("message_new", msg => msg.HasText("инфо"), () => `pek`) //2
+core.on("message_new", msg => msg.HasText("инфо"), () => `pek`) //2 никогда не выполняется
 
 core.on("message_new", () => `pek`) //3
 ```
@@ -60,8 +60,8 @@ core.on("message_new", () => `pek`) //3
 ```js
 core.on("message_new", () => `pek`) //1
 
-core.on("message_new", msg => msg.HasText("инфо"), () => `kek`) //2
-core.on("message_new", msg => msg.HasText("инфо"), () => `pek`) //3
+core.on("message_new", msg => msg.HasText("инфо"), () => `kek`) //2 никогда не выполняется
+core.on("message_new", msg => msg.HasText("инфо"), () => `pek`) //3 никогда не выполняется
 ```
 
 в этом случа 2 и 3 обработчик вообще никогда не будут вызваны потому что 1 обработчик не имеет фильтра, а значит получает все сообщения.
@@ -73,24 +73,28 @@ core.on("message_new", msg => msg.HasText("инфо"), () => `pek`) //3
 
 * HasText(string|array) bool - для типов событий message_new,message_reply,message_edit вернет true если указанная строка есть в сообщении
 * GetUser() object – данные пользователя от которого пришло событие, объект вида
-```js
+```json
 { 
-  member: 1, //1 - вступил в текущее сообщество 0 - не вступил
-  id: 19039187,
-  first_name: 'Иван',
-  last_name: 'Недзвецкий',
-  sex: 2,
-  city: { id: 2, title: 'Санкт-Петербург' },
-  country: { id: 1, title: 'Россия' },
-  photo_200: 'https://pp.userapi.com/c824602/v824602919/10b152/waP9cXWfHwU.jpg?ava=1',
+  "member": 1, //1 - вступил в текущее сообщество 0 - не вступил
+  "id": 19039187,
+  "first_name": "Иван",
+  "last_name": "Недзвецкий",
+  "sex": 2,
+  "city": { "id": 2, "title": "Санкт-Петербург" },
+  "country": { "id": 1, "title": "Россия" },
+  "photo_200": "https://pp.userapi.com/c824602/v824602919/10b152/waP9cXWfHwU.jpg?ava=1"
 }
 ```
 
 * IsChat() bool – для типов событий message_new,message_reply,message_edit вернет true если сообщение из группового чата
 * IsDirect() bool – для типов событий message_new,message_reply,message_edit вернет true если сообщение в личку сообщества (не групповой чат)
 * HasMention() bool – для типов событий message_new,message_reply,message_edit вернет true если в сообщении упоменули бота. Актуально если бот получает все сообщения из беседы и надо сделать команду на @botname команда
-* IsFirstMessage() bool для типов событий message_new,message_reply,message_edit вернет true если это "первое" сообщение. Тоесть если пользователь долго не писал боту (по умолчанию час, настраивается в core.sessionTime = 1000 * 60 * 60 (миллисекунд))
-* IsFirstTyping() bool для типов событий вернет true если пользователь первый раз печатает за последний час (по умолчанию час, настраивается в core.sessionTime = 1000 * 60 * 60 (миллисекунд))
+* IsFirstMessage() bool – для типов событий message_new,message_reply,message_edit вернет true если это "первое" сообщение. Тоесть если пользователь долго не писал боту (по умолчанию час, настраивается в core.sessionTime = 1000 * 60 * 60 (миллисекунд))
+* IsFirstTyping() bool – для типов событий вернет true если пользователь первый раз печатает за последний час (по умолчанию час, настраивается в core.sessionTime = 1000 * 60 * 60 (миллисекунд))
+* HasAttach(type) bool – проверяет наличие прикремений указанного типа в сообщении
+* HasPhoto() bool – проверяет если ли хотябы одна фотография в сообщении
+* GetPhotoMaxSizeUrl() string|null – возвращает ссылку на первую фотографию в сообщении
+* Button() string|null – вернет кнопку если такая была нажата
 
 ### Keyboard (клавиатура)
 

@@ -2,6 +2,12 @@ const bootstrap = require('./bootstrap')
 const LongPoll = require('./longPoll')
 const Router = require('./router')
 const VkApi = require('./api')
+const request = require('request')
+const http = require('http')
+const https = require('https')
+const path = require('path')
+const fs = require("fs")
+
 const {LongPollSettings, trimToken, extractPeerFromUpdate} = require('./tools')
 
 class Bot {
@@ -11,8 +17,12 @@ class Bot {
 		this.api = new VkApi(token)
 		this.router = new Router(this.api)
 		this.onError = console.error
-		this.onUpdate = () => {}
+		this.onUpdate = () => {
+		}
 		this.on = this.router.on.bind(this.router)
+		this.command = (command, callback) => {
+			this.on("message_new", msg => msg.HasCommand(command), callback)
+		}
 
 		this.userCache = {}
 		this.userLastEvent = {}
@@ -46,12 +56,36 @@ class Bot {
 		]
 
 		this.emptyUser = {
-			id:0,
-			first_name:"DELETED",
-			last_name:"DELETED",
-			sex:0,
-			member:0,
+			id: 0,
+			first_name: "DELETED",
+			last_name: "DELETED",
+			sex: 0,
+			member: 0,
 		}
+
+		this.logAllEvents = false
+		this.dispatchUpdates = updates => {
+			if (this.fetchUser) {
+				const ids = updates
+					.reduce((arr, update) => {
+						const peerId = extractPeerFromUpdate(update.type, update['object'])
+						if (peerId && peerId > 0 && peerId < 2e9) {
+							if (this.userCache[peerId] === undefined) {
+								return arr.concat([peerId])
+							}
+						}
+						return arr
+					}, [])
+
+				if (ids.length) {
+					this.fillCache(ids, updates).then(() => {})
+					return
+				}
+			}
+			this.processUpdates(updates)
+		}
+
+		this.dispatch = update => this.dispatchUpdates([update])
 	}
 
 	start() {
@@ -89,40 +123,22 @@ class Bot {
 					}
 				}
 
-				const params = Object.assign({},{...LongPollSettings, group_id: group.id}, requestedEvents)
+				const params = Object.assign({}, {...LongPollSettings, group_id: group.id}, requestedEvents)
 
 				await api.call("groups.setLongPollSettings", params)
 
 				const lp = new LongPoll(api, group.id)
 
 				lp.onError = this.onError
-				lp.onUpdates = updates => {
+				lp.onUpdates = this.dispatchUpdates
 
-					if (this.fetchUser) {
-						const ids = updates
-							.reduce( (arr, update) => {
-								const peerId = extractPeerFromUpdate(update.type, update['object'])
-								if (peerId && peerId > 0 && peerId < 2e9) {
-									if (this.userCache[peerId] === undefined) {
-										return arr.concat([peerId])
-									}
-								}
-								return arr
-							}, [] )
-
-						if (ids.length) {
-							this.fillCache(ids, updates).then(() => {})
-							return
-						}
-					}
-
-					this.processUpdates(updates)
-				}
-
-				await lp.start()
+				lp.start().catch(e => {
+					console.log("BOT ERROR: Long poll: " + e.message)
+					console.error(e)
+				})
 			})
 			.catch(e => {
-				console.log("BOT FAILED: " + e.message)
+				console.log("BOT START FAILED: " + e.message)
 				console.error(e)
 			})
 	}
@@ -132,8 +148,8 @@ class Bot {
 			this.queue = this.queue.concat(updates)
 			return
 		}
-		this.queue.forEach( update => this.processSingleUpdate(update) )
-		this.queue = [];
+		this.queue.forEach(update => this.processSingleUpdate(update))
+		this.queue = []
 		updates.forEach(update => this.processSingleUpdate(update))
 	}
 
@@ -164,40 +180,77 @@ class Bot {
 		update["object"].__user = this.userCache[extractPeerFromUpdate(update.type, update['object'])]
 
 
-		update["object"].GetUser = function() {
+		update["object"].GetUser = function () {
 			return this.__user || self.emptyUser
+		}
+
+		update["object"].HasAttach = function (type) {
+			if (this.attachments) {
+				return this.attachments.filter(x => x.type === type).length
+			} else {
+				return 0
+			}
+		}
+
+		update["object"].HasPhoto = function () {
+			return this.HasAttach('photo')
+		}
+
+		update["object"].HasOnePhoto = function () {
+			return this.HasAttach('photo') === 1
+		}
+
+		update["object"].GetPhotoMaxSizeUrl = function () {
+			const photo = (this.attachments || []).filter(x => x.type === 'photo').pop()
+			if (photo) {
+				const size = photo.photo.sizes.pop()
+				return size.url
+			}
+			return null
 		}
 
 		/**
 		 * @return {boolean}
 		 */
-		update["object"].IsChat = function() {
+		update["object"].IsChat = function () {
 			return this.peer_id >= 2e9
 		}
 
 		/**
 		 * @return {boolean}
 		 */
-		update["object"].IsDirect = function() {
+		update["object"].IsDirect = function () {
 			return this.peer_id < 2e9
 		}
 
 		/**
 		 * @return {boolean}
 		 */
-		update["object"].HasMention = function() {
+		update["object"].HasMention = function () {
 			return this.text && this.text.toString().trim().indexOf(`[club${self.groupId}|`) === 0
+		}
+
+		update['object'].HasCommand = function (command) {
+			let text = (this.text || "").trim()
+			if (this.HasMention()) {
+				text = text.replace(`[club${self.groupId}|`, '').trim()
+			}
+			if (typeof command === 'string') {
+				return text.toLowerCase().indexOf(command.toLowerCase()) === 0
+			} else {
+				return false
+			}
 		}
 
 		/**
 		 * @return {boolean}
 		 */
-		update["object"].IsFirstMessage = function() {
+		update["object"].IsFirstMessage = function () {
 			if (this.__user) {
 				if (!this.__user.last_message_time) {
 					return true
 				} else {
-					return Date.now() - this.__user.last_message_time > self.sessionTime;
+					return Date.now() - this.__user.last_message_time > self.sessionTime
 				}
 			} else {
 				return false
@@ -207,7 +260,7 @@ class Bot {
 		/**
 		 * @return {boolean}
 		 */
-		update["object"].IsFirstTyping = function() {
+		update["object"].IsFirstTyping = function () {
 			if (this.__user) {
 				if (!this.IsFirstMessage()) {
 					return false
@@ -215,27 +268,29 @@ class Bot {
 				if (!self.userLastEvent[this.__user.id]) {
 					return true
 				}
-				return this.IsFirstMessage() && Date.now() - self.userLastEvent[this.__user.id] > self.sessionTime;
+				return this.IsFirstMessage() && Date.now() - self.userLastEvent[this.__user.id] > self.sessionTime
 			} else {
 				return false
 			}
 		}
 
-		update["object"].Button = function() {
+		update["object"].Button = function () {
 			if (this.payload) {
 				try {
 					return JSON.parse(this.payload)
-				} catch(e) {
-					return undefined
+				} catch (e) {
+					return null
 				}
 			} else {
-				return undefined
+				return null
 			}
 		}
 	}
 
 	processSingleUpdate(update) {
-
+		if (this.logAllEvents) {
+			console.debug((new Date()).toDateString() + ": " + JSON.stringify(update))
+		}
 		if (update.type === 'group_join' && this.userCache[update['object'].user_id]) {
 			this.userCache[update['object'].user_id].member = 1
 		}
@@ -272,18 +327,18 @@ class Bot {
 		const info = `API.users.get({user_ids:"${userIds.join(",")}",fields:"${this.fetchFieldsForUser.join(',')}"})`
 		const code = `return [${member},${info}];`
 		try {
-			const res = await this.api.call('execute', {code:code})
+			const res = await this.api.call('execute', {code: code})
 
 			const isMember = res[0]
 			const info = res[1]
 
-			isMember.forEach( user => {
+			isMember.forEach(user => {
 				this.addToCache(user.user_id, user)
-			} )
+			})
 
-			info.forEach( user => {
+			info.forEach(user => {
 				this.addToCache(user.id, user)
-			} )
+			})
 		} catch (e) {
 			this.onError(e)
 		}
@@ -310,19 +365,19 @@ class Bot {
 		const times = []
 		for (let key in this.userLastEvent) {
 			if (this.userLastEvent.hasOwnProperty(key)) {
-				times.push( {ts:this.userLastEvent[key], id:key} )
+				times.push({ts: this.userLastEvent[key], id: key})
 			}
 		}
 
-		times.sort( (a,b) => {
+		times.sort((a, b) => {
 			if (a.ts > b.ts) {
 				return -1
-			} else if(a.ts < b.ts) {
+			} else if (a.ts < b.ts) {
 				return 1
 			} else {
 				return 0
 			}
-		} )
+		})
 
 		const lim = Math.floor(this.maxUsersInCache / 2)
 
@@ -330,6 +385,138 @@ class Bot {
 			delete this.userLastEvent[times[i].id]
 			delete this.userCache[times[i].id]
 		}
+	}
+
+	messageTo(peerId, message, attachments) {
+		if (attachments && attachments.join) {
+			attachments = attachments.join(',')
+		}
+		this.api.call("messages.send", {
+			peer_id: peerId,
+			message: message,
+			attachment: attachments
+		})
+	}
+
+	uploadPhotoBufferToPeer(peerId, buffer) {
+		return new Promise((resolve, reject) => {
+			this.api.call("photos.getMessagesUploadServer", {peer_id: peerId})
+				.then(({upload_url}) => {
+					this.uploadBufferToUrl(upload_url, buffer, "photo", "image.png")
+						.then( data => this.api.call("photos.saveMessagesPhoto", {
+								server: data.server,
+								photo: data.photo,
+								hash: data.hash,
+							}))
+						.then(photos => {
+							resolve(photos.map(photo => {
+								photo.attach_key = "photo" + photo.owner_id + "_" + photo.id + "_" + photo.access_key
+								return photo
+							}).pop())
+						}).catch(reject)
+				})
+				.catch(reject)
+		})
+	}
+
+	uploadPhotoToPeer(peerId, url) {
+		return new Promise((resolve, reject) => {
+			this.getBufferFromString(url)
+				.then(buffer => this.uploadPhotoBufferToPeer(peerId, buffer))
+				.then(resolve)
+				.catch(reject)
+		})
+	}
+
+	async uploadToVoiceMessage(peerId, fileName) {
+		const {upload_url} = await this.api.call("docs.getMessagesUploadServer", {type:"audio_message", peer_id: peerId})
+		const baseFileName = (fileName instanceof Buffer) ? "message.mp3" : path.basename(fileName)
+		const buffer = await this.getBufferFromString(fileName)
+		const data = await this.uploadBufferToUrl(upload_url, buffer, 'file', baseFileName)
+		const [file] = await this.api.call('docs.save', {file:data.file,title:baseFileName})
+		const attachKey = "audio_message"+file.owner_id + '_' + file.id + ( file.access_key ? ("_" + file.access_key) : "" )
+		return {...file, attach_key: attachKey}
+	}
+
+	getBufferFromString(str) {
+		if (str instanceof Buffer) {
+			return new Promise(resolve => resolve(str))
+		}
+		if (str.indexOf('http') === 0) {
+			return this.getBufferFromUrl(str)
+		} else {
+			return this.getBufferFromFile(str)
+		}
+	}
+
+	getBufferFromUrl(url) {
+		return new Promise((resolve, reject) => {
+			const httpClient = url.indexOf('https') === 0 ? https : http
+			httpClient.get(url, res => {
+				const {statusCode} = res
+				if (statusCode !== 200) {
+					res.resume()
+					reject(new Error("Cant download file, status: " + statusCode + " from url:" + url))
+					return
+				}
+
+				let buffers = [];
+				res.on('data', (data) => {
+					buffers.push(data)
+				})
+				res.on('end', () => {
+					try {
+						const buffer = Buffer.concat(buffers)
+						resolve(buffer)
+					} catch (e) {
+						reject(e)
+					}
+				}).on('error', reject)
+			})
+		})
+	}
+
+	getBufferFromFile(fileName) {
+		return new Promise( (resolve,reject) => {
+			fs.readFile(fileName, function (err, data) {
+				if (err) {
+					reject(err)
+				} else {
+					resolve(data)
+				}
+			})
+		} )
+	}
+
+	uploadBufferToUrl( uploadUrl, buffer, postFileName, fileName = undefined) {
+		return new Promise( (resolve, reject) => {
+			request.post({
+					url: uploadUrl,
+					formData: {
+						[postFileName]: {
+							value: buffer,
+							options: {
+								filename: fileName
+							}
+						}
+					}
+				},
+				(err, http, body) => {
+					if (err) {
+						reject(err)
+					}
+					const data = JSON.parse(body)
+					if (data) {
+						if (data.error) {
+							reject(new Error("Fail upload file: " + data.error))
+							return
+						}
+						resolve(data)
+					} else {
+						reject(new Error("[Upload error]: Server " + uploadUrl + " return " + body))
+					}
+				})
+		} )
 	}
 }
 

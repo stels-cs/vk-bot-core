@@ -50,6 +50,7 @@ module.exports = {
 		user_unblock: 0,
 	},
 	extractPeerFromUpdate(type, object) {
+		if (!object) return null
 		switch (type) {
 			case "message_typing_state":
 				return object.from_id
