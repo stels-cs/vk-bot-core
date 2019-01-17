@@ -50,7 +50,7 @@ class Router {
 					return keyboardMessage
 				}
 			} else {
-				callback = () => msg
+				callback = () => keyboardMessage
 			}
 
 		}
@@ -126,7 +126,7 @@ class Router {
 		}
 	}
 
-	response(res, type, update) {
+	response(res, type, object) {
 		if (typeof res === "string") {
 			res = {message: res}
 		}
@@ -134,10 +134,10 @@ class Router {
 		if (typeof res === "object" && res !== null) {
 			if (res instanceof Promise) {
 				res.then(some => {
-					this.response(some, type, update)
+					this.response(some, type, object)
 				})
 			} else {
-				const peerId = extractPeerFromUpdate(type, update)
+				const peerId = extractPeerFromUpdate(type, object)
 				if (peerId) {
 					res.peer_id = peerId
 					res.random_id = 0
@@ -150,6 +150,8 @@ class Router {
 					}
 				}
 			}
+		} else if (typeof res === "function") {
+			this.response( res(object, this.api), type, object )
 		}
 	}
 }

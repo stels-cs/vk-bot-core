@@ -1,4 +1,31 @@
 module.exports = {
+	PhotoFile: function (photo, text = undefined) {
+		return async msg => {
+			const file = await msg.__core.uploadPhoto(photo, msg.peer_id)
+			return {
+				message: text,
+				attachment: file.attach_key
+			}
+		}
+	},
+	AudioFile: function (audio, text = undefined) {
+		return async msg => {
+			const file = await msg.__core.uploadVoiceMessage(audio, msg.peer_id)
+			return {
+				message: text,
+				attachment: file.attach_key
+			}
+		}
+	},
+	DocFile: function (doc, text = undefined) {
+		return async msg => {
+			const file = await msg.__core.uploadDocument(doc, msg.peer_id)
+			return {
+				message: text,
+				attachment: file.attach_key
+			}
+		}
+	},
 	trimToken : function (token) {
 		if (!token) {
 			return token

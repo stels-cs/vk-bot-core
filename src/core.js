@@ -80,7 +80,7 @@ class Bot {
 					(new Date()).toLocaleTimeString(),
 					"<-:",
 					"@" + peerId,
-					inputText ? inputText : "[NO RESPONSE TEXT]",
+					inputText ? inputText : (params.attachment ? params.attachment : "[NO RESPONSE TEXT AND ATTACHMENTS]"),
 				]
 				console.debug(message.join(" "))
 			}
@@ -137,7 +137,11 @@ class Bot {
 	 * @param {function|string} callback
 	 * @return {*}
 	 */
-	onMessage(filter, callback) {
+	onMessage(filter, callback = undefined) {
+		if (callback === undefined) {
+			callback = filter
+			filter = () => true
+		}
 		return this.on("message_new", filter, callback)
 	}
 
@@ -242,6 +246,8 @@ class Bot {
 
 	fillUpdate(update) {
 		const self = this
+
+		update["object"].__core = this
 
 		/**
 		 * @return {boolean}
@@ -560,8 +566,8 @@ class Bot {
 		const baseFileName = (document instanceof Buffer) ? title : path.basename(document)
 		const buffer = await this.getBufferFromString(document)
 		const data = await this.uploadBufferToUrl(upload_url, buffer, 'file', baseFileName)
-		const [file] = await this.api.call('docs.save', {file: data.file, title: title || baseFileName})
-		const attachKey = getAttachKey(docType, file)
+		const file = await this.api.call('docs.save', {file: data.file, title: title || baseFileName})
+		const attachKey = getAttachKey(docType, file[file.type])
 		return {...file, attach_key: attachKey}
 	}
 

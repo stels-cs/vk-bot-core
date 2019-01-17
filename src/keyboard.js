@@ -1,9 +1,9 @@
 module.exports = {
-	Keyboard, DefaultBtn, NegativeBtn, PositiveBtn, PrimaryBtn
+	Keyboard, DefaultBtn, NegativeBtn, PositiveBtn, PrimaryBtn, DropKeyboard, GetKeyboard
 }
 
 
-function Keyboard(text, buttons, oneTime = false) {
+function GetKeyboard(buttons, oneTime = false) {
 	if (!Array.isArray(buttons)) {
 		throw new Error("Second parameter must be array of buttons")
 	}
@@ -19,12 +19,24 @@ function Keyboard(text, buttons, oneTime = false) {
 			}
 		} )
 	} )
+
+	return JSON.stringify({
+		one_time: oneTime,
+		buttons: buttons,
+	})
+}
+
+function Keyboard(text, buttons, oneTime = false) {
 	return {
 		message: text,
-		keyboard: JSON.stringify({
-			one_time: oneTime,
-			buttons: buttons,
-		})
+		keyboard: GetKeyboard(buttons, oneTime)
+	}
+}
+
+function DropKeyboard(text) {
+	return {
+		message: text,
+		keyboard: GetKeyboard([], true)
 	}
 }
 
