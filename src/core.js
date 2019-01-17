@@ -7,24 +7,27 @@ const http = require('http')
 const https = require('https')
 const path = require('path')
 const fs = require("fs")
-
-const {LongPollSettings, trimToken, extractPeerFromUpdate} = require('./tools')
+const {LongPollSettings, extractUserIdFromUpdate, isStartWithCommand, getAttachKey} = require('./tools')
 
 class Bot {
-
 	constructor(token) {
 		this.token = token
 		this.api = new VkApi(token)
 		this.router = new Router(this.api)
 		this.onError = console.error
+		this.onLog = console.log
 		this.onUpdate = () => {
 		}
 		this.on = this.router.on.bind(this.router)
-		this.command = (command, callback) => {
+		this.removeEventListener = this.router.removeEventListener.bind(this.router)
+		this.onNextMessage = this.router.onNextMessage.bind(this.router)
+		this.removePeerIdListener = this.router.removePeerIdListener.bind(this.router)
+		this.onCommand = (command, callback) => {
 			this.on("message_new", msg => msg.HasCommand(command), callback)
 		}
 
 		this.userCache = {}
+		this.userContext = {}
 		this.userLastEvent = {}
 		this.userInCacheCount = 0
 		this.fetchUser = true
@@ -61,14 +64,33 @@ class Bot {
 			last_name: "DELETED",
 			sex: 0,
 			member: 0,
+			getContext: () => {
+				return {}
+			}
 		}
 
-		this.logAllEvents = false
+		this.logEventsOnConsole = false
+		this.logMessagesOnConsole = false
+
+		this.router.onResponse = params => {
+			if (this.logMessagesOnConsole) {
+				const inputText = params.message
+				const peerId = params.peer_id
+				const message = [
+					(new Date()).toLocaleTimeString(),
+					"<-:",
+					"@" + peerId,
+					inputText ? inputText : "[NO RESPONSE TEXT]",
+				]
+				console.debug(message.join(" "))
+			}
+		}
+
 		this.dispatchUpdates = updates => {
 			if (this.fetchUser) {
 				const ids = updates
 					.reduce((arr, update) => {
-						const peerId = extractPeerFromUpdate(update.type, update['object'])
+						const peerId = extractUserIdFromUpdate(update.type, update['object'])
 						if (peerId && peerId > 0 && peerId < 2e9) {
 							if (this.userCache[peerId] === undefined) {
 								return arr.concat([peerId])
@@ -78,7 +100,8 @@ class Bot {
 					}, [])
 
 				if (ids.length) {
-					this.fillCache(ids, updates).then(() => {})
+					this.fillCache(ids, updates).then(() => {
+					})
 					return
 				}
 			}
@@ -88,58 +111,122 @@ class Bot {
 		this.dispatch = update => this.dispatchUpdates([update])
 	}
 
-	start() {
+	dispatchFromHttp(eventObject, response) {
+		if (eventObject && eventObject.type === 'confirmation') {
+			this.onLog("Received confirmation request from vk.com")
+			this.onLog("Fetching confirmation code for group: "+eventObject.group_id)
+			this.api.call("groups.getCallbackConfirmationCode", {group_id: eventObject.group_id})
+				.then(r => {
+					this.onLog("confirmation code successful send")
+					response.send(r.code)
+				})
+				.catch(e => {
+					this.onError(e)
+					response.send("Cant fetch code from API: " + e.message)
+				})
+		} else {
+			response.send("ok")
+			if (eventObject) {
+				this.dispatch(eventObject)
+			}
+		}
+	}
 
+	/**
+	 * @param {function|string|RegExp|Array} filter
+	 * @param {function|string} callback
+	 * @return {*}
+	 */
+	onMessage(filter, callback) {
+		return this.on("message_new", filter, callback)
+	}
+
+	_start() {
 		this.fetchFieldsForUser.forEach(key => {
 			this.emptyUser[key] = ""
 		})
 
-
 		return bootstrap(this.token)
-			.then(async ({api, group, unread_messages, permissions}) => {
-
-				const welcome = `Бот запущен в группе ${group.name} https://vk.com/${group.screen_name}\n`
-					+ `Непрочитанных сообщений: ${unread_messages}`
-				console.info(welcome)
-
+			.then(async ({api, group}) => {
+				this.onLog(`Бот запущен в группе ${group.name} https://vk.com/${group.screen_name}`)
 				this.groupId = group.id
 				this.groupName = group.name
 				this.groupScreen = group.screen_name
+			})
+			.catch(e => {
+				this.onLog("BOT START FAILED: " + e.message)
+				this.onError(e)
+				throw e
+			})
+	}
 
-				const rights = `Права доступа: ${permissions.mask} ${permissions.permissions.map(x => x.name).join(", ")}`
-				console.info(rights)
+	getParamsForEvents() {
+		const requestedEvents = {}
+		for (let key in this.router.listeners) {
+			if (this.router.listeners.hasOwnProperty(key)) {
+				requestedEvents[key] = 1
+			}
+		}
 
-				//https://vk.com/dev/permissions
-				const MANAGE_PERMISSION = 262144
+		return Object.assign({}, {...LongPollSettings, group_id: this.groupId}, requestedEvents)
+	}
 
-				if ((permissions.mask & MANAGE_PERMISSION) !== MANAGE_PERMISSION) {
-					throw new Error("У этого ключа " + trimToken(api.token) + " нет прав на упраление группой, запуск бота невозможен! No manage permission!")
+	startAsLongPoll() {
+		return this._start().then(async () => {
+			const requestedEvents = {}
+			for (let key in this.router.listeners) {
+				if (this.router.listeners.hasOwnProperty(key)) {
+					requestedEvents[key] = 1
 				}
+			}
 
-				const requestedEvents = {}
-				for (let key in this.router.listeners) {
-					if (this.router.listeners.hasOwnProperty(key)) {
-						requestedEvents[key] = 1
+			await this.api.call("groups.setLongPollSettings", this.getParamsForEvents())
+			const lp = new LongPoll(this.api, this.groupId)
+			lp.onError = this.onError
+			lp.onUpdates = this.dispatchUpdates
+			lp.start().catch(e => {
+				this.onLog("BOT ERROR: Long poll: " + e.message)
+				this.onError(e)
+			})
+		})
+	}
+
+	startAsCallbackApi( serverUrl, serverName = "CORGI_BOT_0803" ) {
+		return this._start()
+			.then(async () => {
+				const servers = await this.api.call("groups.getCallbackServers", {group_id: this.groupId})
+				const ownServer = servers.items.filter( server => server.url === serverUrl ).pop()
+				let needInstallServer = true
+				let serverId = null
+				if (ownServer) {
+					if (ownServer.status === 'ok') {
+						this.onLog("Callback server installed")
+						this.onLog("Wait events on: " + ownServer.url)
+						needInstallServer = false
+						serverId = ownServer.id
+					} else {
+						this.onLog("Callback server found, bus status is not ok -- "+ownServer.status)
+						await this.api.call("groups.deleteCallbackServer", {group_id:this.groupId, server_id:ownServer.id})
+						this.onLog("Server deleted..")
 					}
 				}
 
-				const params = Object.assign({}, {...LongPollSettings, group_id: group.id}, requestedEvents)
+				if (needInstallServer) {
+					this.onLog("Start installing server....")
+					const params = {
+						group_id: this.groupId,
+						url:serverUrl,
+						title: serverName
+					}
+					const server = await this.api.call("groups.addCallbackServer", params)
+					const {server_id} = server
+					this.onLog("Sever installed id: " + server_id)
+					this.onLog("Sever name: " + serverName + " server url: " + serverUrl)
+					serverId = server_id
+				}
 
-				await api.call("groups.setLongPollSettings", params)
-
-				const lp = new LongPoll(api, group.id)
-
-				lp.onError = this.onError
-				lp.onUpdates = this.dispatchUpdates
-
-				lp.start().catch(e => {
-					console.log("BOT ERROR: Long poll: " + e.message)
-					console.error(e)
-				})
-			})
-			.catch(e => {
-				console.log("BOT START FAILED: " + e.message)
-				console.error(e)
+				await this.api.call("groups.setCallbackSettings", {...this.getParamsForEvents(), server_id:serverId})
+				this.onLog("Server settings updated successful!")
 			})
 	}
 
@@ -154,7 +241,6 @@ class Bot {
 	}
 
 	fillUpdate(update) {
-
 		const self = this
 
 		/**
@@ -162,8 +248,15 @@ class Bot {
 		 */
 		update["object"].HasText = function (text) {
 			if (this.text) {
-				if (Array.isArray(text)) {
-					const t = this.text.toString().toLowerCase()
+				let t = this.text.toString()
+				if (this.HasMention()) {
+					t = t.replace(`[club${self.groupId}|`, '').trim()
+					t = t.substr(t.indexOf(']') + 1).trim()
+				}
+				if (text instanceof RegExp) {
+					return t.match(text)
+				} else if (Array.isArray(text)) {
+					t = t.toLowerCase()
 					for (let i = 0; i < text.length; i++) {
 						if (t.indexOf(text[i].toString().toLowerCase()) !== -1) {
 							return true
@@ -171,13 +264,14 @@ class Bot {
 					}
 					return false
 				} else {
-					return this.text.toString().toLowerCase().indexOf(text.toString().toLowerCase()) !== -1
+					t = t.toLowerCase()
+					return t.indexOf(text.toString().toLowerCase()) !== -1
 				}
 			} else {
 				return false
 			}
 		}
-		update["object"].__user = this.userCache[extractPeerFromUpdate(update.type, update['object'])]
+		update["object"].__user = this.userCache[extractUserIdFromUpdate(update.type, update['object'])]
 
 
 		update["object"].GetUser = function () {
@@ -231,12 +325,19 @@ class Bot {
 		}
 
 		update['object'].HasCommand = function (command) {
-			let text = (this.text || "").trim()
+			let text = (this.text || "").toString().trim().toLowerCase()
 			if (this.HasMention()) {
 				text = text.replace(`[club${self.groupId}|`, '').trim()
+				text = text.substr(text.indexOf(']') + 1).trim()
 			}
 			if (typeof command === 'string') {
-				return text.toLowerCase().indexOf(command.toLowerCase()) === 0
+				return isStartWithCommand(text, command)
+			} else if (Array.isArray(command)) {
+				for (let i = 0; i < command.length; i++) {
+					if (isStartWithCommand(text, command[i])) {
+						return true
+					}
+				}
 			} else {
 				return false
 			}
@@ -288,15 +389,26 @@ class Bot {
 	}
 
 	processSingleUpdate(update) {
-		if (this.logAllEvents) {
-			console.debug((new Date()).toDateString() + ": " + JSON.stringify(update))
+		if (this.logEventsOnConsole) {
+			console.debug((new Date()).toLocaleTimeString() + ": " + update.type + "\n" + JSON.stringify(update, null, 2))
 		}
-		if (update.type === 'group_join' && this.userCache[update['object'].user_id]) {
-			this.userCache[update['object'].user_id].member = 1
+		if (this.logMessagesOnConsole && update.type === 'message_new') {
+			const inputText = update.object.text
+			const peerId = update.object.peer_id
+			const message = [
+				(new Date()).toLocaleTimeString(),
+				"->:",
+				"@" + peerId,
+				inputText ? inputText : "[NO TEXT]",
+			]
+			console.debug(message.join(" "))
+		}
+		if (update.type === 'group_join' && this.userCache[update['object']['user_id']]) {
+			this.userCache[update['object']['user_id']].member = 1
 		}
 
-		if (update.type === 'group_leave' && this.userCache[update['object'].user_id]) {
-			this.userCache[update['object'].user_id].member = 0
+		if (update.type === 'group_leave' && this.userCache[update['object']['user_id']]) {
+			this.userCache[update['object']['user_id']].member = 0
 		}
 
 		this.fillUpdate(update)
@@ -309,7 +421,7 @@ class Bot {
 		}
 
 		if (this.fetchUser) {
-			const peerId = extractPeerFromUpdate(update.type, update['object'])
+			const peerId = extractUserIdFromUpdate(update.type, update['object'])
 
 			if (peerId && peerId > 0 && peerId < 2e9) {
 				this.addToCache(peerId, {last_event_type: update.type})
@@ -355,6 +467,15 @@ class Bot {
 		}
 
 		this.userCache[id] = Object.assign({}, this.userCache[id], data)
+		this.userCache[id].getContext = () => {
+			if (!this.userContext[id]) {
+				this.userContext[id] = {}
+			}
+			return this.userContext[id]
+		}
+		this.userCache[id].clearContext = () => {
+			delete this.userContext[id]
+		}
 	}
 
 	clearCache() {
@@ -387,56 +508,63 @@ class Bot {
 		}
 	}
 
-	messageTo(peerId, message, attachments) {
+	async sendMessage(peerId, message, attachments) {
 		if (attachments && attachments.join) {
 			attachments = attachments.join(',')
 		}
-		this.api.call("messages.send", {
+		return await this.api.call("messages.send", {
 			peer_id: peerId,
 			message: message,
 			attachment: attachments
 		})
 	}
 
-	uploadPhotoBufferToPeer(peerId, buffer) {
-		return new Promise((resolve, reject) => {
-			this.api.call("photos.getMessagesUploadServer", {peer_id: peerId})
-				.then(({upload_url}) => {
-					this.uploadBufferToUrl(upload_url, buffer, "photo", "image.png")
-						.then( data => this.api.call("photos.saveMessagesPhoto", {
-								server: data.server,
-								photo: data.photo,
-								hash: data.hash,
-							}))
-						.then(photos => {
-							resolve(photos.map(photo => {
-								photo.attach_key = "photo" + photo.owner_id + "_" + photo.id + "_" + photo.access_key
-								return photo
-							}).pop())
-						}).catch(reject)
-				})
-				.catch(reject)
-		})
+	async sendActivity(peerId, type = 'typing') {
+		return this.api.call('messages.setActivity', {peer_id: peerId, type: type})
 	}
 
-	uploadPhotoToPeer(peerId, url) {
-		return new Promise((resolve, reject) => {
-			this.getBufferFromString(url)
-				.then(buffer => this.uploadPhotoBufferToPeer(peerId, buffer))
-				.then(resolve)
-				.catch(reject)
-		})
+	async markAsRead(peerId) {
+		return this.api.call('messages.markAsRead', {peer_id: peerId})
 	}
 
-	async uploadToVoiceMessage(peerId, fileName) {
-		const {upload_url} = await this.api.call("docs.getMessagesUploadServer", {type:"audio_message", peer_id: peerId})
-		const baseFileName = (fileName instanceof Buffer) ? "message.mp3" : path.basename(fileName)
-		const buffer = await this.getBufferFromString(fileName)
+	async markAsAnsweredConversation(peerId, answered = 1) {
+		return this.api.call('messages.markAsAnsweredConversation', {peer_id: peerId, answered: answered})
+	}
+
+	async markAsImportantConversation(peerId, important = 1) {
+		return this.api.call('messages.markAsImportantConversation', {peer_id: peerId, important: important})
+	}
+
+	async uploadPhoto(photo, peerId = undefined) {
+		const buffer = await this.getBufferFromString(photo)
+		const {upload_url} = await this.api.call("photos.getMessagesUploadServer", {peer_id: peerId})
+		const data = await this.uploadBufferToUrl(upload_url, buffer, "photo", "image.png")
+		const files = await this.api.call("photos.saveMessagesPhoto", {
+			server: data.server,
+			photo: data.photo,
+			hash: data.hash,
+		})
+		return files.map(photo => {
+			photo.attach_key = getAttachKey("photo", photo)
+			return photo
+		}).pop()
+	}
+
+	async uploadVoiceMessage(voiceMessage, peerId) {
+		const baseFileName = (voiceMessage instanceof Buffer) ? "message.mp3" : path.basename(voiceMessage)
+		return this.uploadDocument(voiceMessage, peerId, baseFileName, "audio_message")
+	}
+
+	async uploadDocument(document, peerId = undefined, title = null, docType = "doc") {
+		const {upload_url} = await this.api.call("docs.getMessagesUploadServer", {type: docType, peer_id: peerId})
+		const baseFileName = (document instanceof Buffer) ? title : path.basename(document)
+		const buffer = await this.getBufferFromString(document)
 		const data = await this.uploadBufferToUrl(upload_url, buffer, 'file', baseFileName)
-		const [file] = await this.api.call('docs.save', {file:data.file,title:baseFileName})
-		const attachKey = "audio_message"+file.owner_id + '_' + file.id + ( file.access_key ? ("_" + file.access_key) : "" )
+		const [file] = await this.api.call('docs.save', {file: data.file, title: title || baseFileName})
+		const attachKey = getAttachKey(docType, file)
 		return {...file, attach_key: attachKey}
 	}
+
 
 	getBufferFromString(str) {
 		if (str instanceof Buffer) {
@@ -460,7 +588,7 @@ class Bot {
 					return
 				}
 
-				let buffers = [];
+				let buffers = []
 				res.on('data', (data) => {
 					buffers.push(data)
 				})
@@ -477,7 +605,7 @@ class Bot {
 	}
 
 	getBufferFromFile(fileName) {
-		return new Promise( (resolve,reject) => {
+		return new Promise((resolve, reject) => {
 			fs.readFile(fileName, function (err, data) {
 				if (err) {
 					reject(err)
@@ -485,11 +613,11 @@ class Bot {
 					resolve(data)
 				}
 			})
-		} )
+		})
 	}
 
-	uploadBufferToUrl( uploadUrl, buffer, postFileName, fileName = undefined) {
-		return new Promise( (resolve, reject) => {
+	uploadBufferToUrl(uploadUrl, buffer, postFileName, fileName = undefined) {
+		return new Promise((resolve, reject) => {
 			request.post({
 					url: uploadUrl,
 					formData: {
@@ -516,7 +644,7 @@ class Bot {
 						reject(new Error("[Upload error]: Server " + uploadUrl + " return " + body))
 					}
 				})
-		} )
+		})
 	}
 }
 

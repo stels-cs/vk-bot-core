@@ -1,13 +1,13 @@
 # Bot core
 
-Библиотека для ботов ВКонтакте на NodeJS
+Библиотека для создания ботов ВКонтакте на NodeJS
 Для получения сообщений бот использует Long Poll https://vk.com/dev/bots_longpoll
 
 ```bash
 npm i vk-bot-core
 ```
 
-Убедитесть что у вас установлена nodejs версии 8 или выше
+Убедитесть что у вас установлена nodejs версии 8 или выше (node -v в консоли)
 
 Пример:
 
@@ -18,25 +18,12 @@ const vk_token = "dfbf7f2edd9....cf24858f9a00" //Токен сообщества
 
 const core = new Core(vk_token)
 
-core.on("message_new", msg => `Привет ${msg.GetUser().first_name}, чего хотел?`)
+core.onMessage("привет алиса", `я не Алиса!`)
+core.onMessage("", `Привет {first_name}, это самый простой бот, напиши мне "привет алиса"`)
 
-core.start()
+core.startAsLongPoll()
 ```
 
-Разные ответы на разные команды
-
-```js
-const {Core} = require('vk-bot-core')
-const vk_token = "dfbf7f2edd9....cf24858f9a00" //Токен сообщества с правами на сообщения и управление
-
-const core = new Core(vk_token)
-
-core.on("message_new", msg => msg.HasText("инфо"), () => `Бот создан с помошью этой штуки https://github.com/stels-cs/vk-bot-core`)
-
-core.on("message_new", msg => `Привет ${msg.GetUser().first_name}, чего хотел?`)
-
-core.start()
-```
 ### API
 
 **core.on(event_name, callback)**

@@ -5,7 +5,7 @@ const qs = require('qs')
 
 module.exports = class VkApi {
 
-	constructor(token, lang = 'ru', version = '5.84') {
+	constructor(token, lang = 'ru', version = '5.92') {
 		this.lang = lang
 		this.version = version
 		this.token = token

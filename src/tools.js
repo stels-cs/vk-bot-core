@@ -7,7 +7,7 @@ module.exports = {
 		return token.substr(0, 5) + '...' + token.substr(-5)
 	},
 	LongPollSettings: {
-		api_version:"5.80",
+		api_version:"5.92",
 		enabled: 1,
 		message_new: 0,
 		message_reply: 0,
@@ -89,5 +89,62 @@ module.exports = {
 				return object.from_id > 0 ? object.from_id : null
 		}
 		return null
+	},
+	extractUserIdFromUpdate(type, object) {
+		if (!object) return null
+		switch (type) {
+			case "message_typing_state":
+				return object.from_id
+			case "message_new":
+			case "message_reply":
+			case "message_edit":
+				return object.from_id
+			case "message_allow":
+				return object.user_id
+			case "user_id":
+				return object.user_id
+			case "photo_comment_new":
+			case "photo_comment_edit":
+			case "photo_comment_restore":
+				return object.from_id > 0 ? object.from_id : null
+			case "photo_comment_delete":
+				return object.deleter_id
+			case "audio_new":
+				return object.owner_id
+			case "group_change_photo":
+				return object.user_id
+			case "group_change_settings":
+				return object.user_id
+			case "group_officers_edit":
+				return object.admin_id
+			case "poll_vote_new":
+				return object.user_id
+			case "user_block":
+				return object.user_id
+			case "group_join":
+				return object.user_id
+			case "group_leave":
+				return object.user_id
+			case "wall_reply_new":
+			case "video_comment_new":
+				return object.from_id > 0 ? object.from_id : null
+		}
+		return null
+	},
+	isStartWithCommand(text, command) {
+		if (!command || !command.length || command.length > text.length) {
+			return false
+		}
+		if (text.indexOf(command.toLowerCase()) === 0) {
+			if (text.length === command.length) {
+				return true
+			}
+			return text[command.length] === ' ';
+		} else {
+			return false
+		}
+	},
+	getAttachKey(type, object) {
+		return type + object['owner_id'] + "_" + object['id'] + "_" + ( object['access_key'] ? ("_" + object['access_key']) : "" )
 	}
 }
