@@ -144,7 +144,7 @@ class Router {
 					this.api.call("messages.send", res)
 						.then(() => {
 						})
-						.catch(e => console.error(e))
+						.catch(e => this.onSendMessageError(res, e))
 					if (this.onResponse) {
 						this.onResponse(res)
 					}
@@ -153,6 +153,10 @@ class Router {
 		} else if (typeof res === "function") {
 			this.response( res(object, this.api), type, object )
 		}
+	}
+
+	onSendMessageError(params, error) {
+		console.error("Cant send message with params "+JSON.stringify(params), error)
 	}
 }
 

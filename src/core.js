@@ -22,9 +22,6 @@ class Bot {
 		this.removeEventListener = this.router.removeEventListener.bind(this.router)
 		this.onNextMessage = this.router.onNextMessage.bind(this.router)
 		this.removePeerIdListener = this.router.removePeerIdListener.bind(this.router)
-		this.onCommand = (command, callback) => {
-			this.on("message_new", msg => msg.HasCommand(command), callback)
-		}
 
 		this.userCache = {}
 		this.userContext = {}
@@ -32,6 +29,8 @@ class Bot {
 		this.userInCacheCount = 0
 		this.fetchUser = true
 		this.maxUsersInCache = 10000
+		this.LoadLastLongPollTs = null
+		this.SaveLastLongPollTs = null
 
 		this.groupId = null
 		this.groupName = null
@@ -39,6 +38,7 @@ class Bot {
 		this.lockQueue = 0
 		this.queue = []
 
+		this.onSendMessageError = null
 		this.sessionTime = 1000 * 60 * 60
 
 		this.fetchFieldsForUser = [
@@ -145,10 +145,23 @@ class Bot {
 		return this.on("message_new", filter, callback)
 	}
 
+	/**
+	 * @param {string|RegExp|Array} command
+	 * @param {function|string} callback
+	 * @return {*}
+	 */
+	onCommand(command, callback) {
+		this.on("message_new", msg => msg.HasCommand(command), callback)
+	}
+
 	_start() {
 		this.fetchFieldsForUser.forEach(key => {
 			this.emptyUser[key] = ""
 		})
+
+		if (this.onSendMessageError) {
+			this.router.onSendMessageError = this.onSendMessageError
+		}
 
 		return bootstrap(this.token)
 			.then(async ({api, group}) => {
@@ -188,6 +201,18 @@ class Bot {
 			const lp = new LongPoll(this.api, this.groupId)
 			lp.onError = this.onError
 			lp.onUpdates = this.dispatchUpdates
+			if (typeof this.LoadLastLongPollTs === 'function') {
+				const id = this.LoadLastLongPollTs()
+				if (id instanceof Promise) {
+					const _id = await id
+					lp.ts = parseInt(_id, 10)
+				} else {
+					lp.ts = parseInt(id, 10)
+				}
+			}
+			if (typeof this.SaveLastLongPollTs === 'function') {
+				lp.onSaveNewTs = this.SaveLastLongPollTs
+			}
 			lp.start().catch(e => {
 				this.onLog("BOT ERROR: Long poll: " + e.message)
 				this.onError(e)

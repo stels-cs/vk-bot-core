@@ -13,6 +13,7 @@ module.exports = class LongPoll {
 		})
 		this.onError = function () {}
 		this.onUpdates = function () {}
+		this.onSaveNewTs = function () {}
 	}
 
 	async start() {
@@ -64,6 +65,7 @@ module.exports = class LongPoll {
 			if (!failed) {
 				this.ts = ts
 				this.onUpdates(updates)
+				this.onSaveNewTs(ts)
 			} else {
 				switch (parseInt(failed, 10)) {
 					case 1:
