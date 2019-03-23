@@ -546,7 +546,8 @@ class Bot {
 		return await this.api.call("messages.send", {
 			peer_id: peerId,
 			message: message,
-			attachment: attachments
+			attachment: attachments,
+			random_id: 0
 		})
 	}
 
